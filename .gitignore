@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+data/*.db
+.env
+*.egg-info/
+dist/
+build/
+
+# Embedding model cache
+.cache/
+sentence_transformers/

@@ -1,0 +1,15 @@
+# Core
+sqlalchemy>=2.0
+typer>=0.9
+rich>=13.0
+
+# API & Environment
+requests>=2.31
+python-dotenv>=1.0
+
+# Validation
+pydantic>=2.0
+pydantic-settings>=2.0
+
+# Embedding search (Phase 8) — install when needed:
+# pip install sentence-transformers
