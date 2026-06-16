@@ -87,31 +87,35 @@ class MineEngine:
                 
             console.print(f"[green]Generated {len(generated_children)} unique valid children.[/]")
 
-            # 2. Batch Simulate
-            console.print("[dim]Submitting batch simulation...[/]")
+            # 2. Batch Simulate in chunks of 3 (Brain concurrency limit)
+            console.print(f"[dim]Simulating {len(generated_children)} variants in chunks of 3 to respect API limits...[/]")
             success_count = 0
             
-            progress_urls = {}
-            for child in generated_children:
-                sim_url = self.client.submit_simulation(child.expression)
-                if sim_url:
-                    progress_urls[child.id] = sim_url
-                time.sleep(0.5) # Pace submissions
-            
-            if progress_urls:
-                console.print(f"[dim]Polling {len(progress_urls)} simulations in parallel...[/]")
-                results = self.client.poll_simulations_batch(progress_urls, max_workers=10)
+            chunk_size = 3
+            for i in range(0, len(generated_children), chunk_size):
+                chunk = generated_children[i:i + chunk_size]
+                progress_urls = {}
                 
-                from services.experiment_service import import_from_api_response
-                for exp_id, result in results.items():
-                    if result:
-                        updated = import_from_api_response(exp_id, result)
-                        if updated and updated.score and updated.score > 0:
-                            success_count += 1
-                            
-                console.print(f"[green]Simulation complete. {success_count}/{len(progress_urls)} yielded positive scores.[/]")
-            else:
-                console.print("[yellow]No simulations successfully submitted.[/]")
+                # Submit chunk
+                for child in chunk:
+                    sim_url = self.client.submit_simulation(child.expression)
+                    if sim_url:
+                        progress_urls[child.id] = sim_url
+                    time.sleep(1.0) # Pace submissions
+                
+                # Poll chunk
+                if progress_urls:
+                    console.print(f"[dim]  Polling chunk {i//chunk_size + 1}/{(len(generated_children) + chunk_size - 1)//chunk_size} ({len(progress_urls)} sims)...[/]")
+                    results = self.client.poll_simulations_batch(progress_urls, max_workers=chunk_size)
+                    
+                    from services.experiment_service import import_from_api_response
+                    for exp_id, result in results.items():
+                        if result:
+                            updated = import_from_api_response(exp_id, result)
+                            if updated and updated.score and updated.score > 0:
+                                success_count += 1
+                                
+            console.print(f"[green]Simulation complete. {success_count}/{len(generated_children)} yielded positive scores.[/]")
 
             # 3. Prune weak alphas
             archived = prune_experiments(keep_top=50)
