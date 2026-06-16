@@ -72,6 +72,14 @@ class WorldQuantClient:
                 logger.error("Rate limited — max retries exhausted.")
                 return None
 
+            # Unauthorized — re-authenticate and retry once
+            if response.status_code == 401 and retries == 0:
+                logger.warning("Got 401 Unauthorized. Re-authenticating...")
+                if self.authenticate():
+                    return self._request(method, url, retries=1, **kwargs)
+                logger.error("Re-authentication failed.")
+                return None
+
             # Server error — retry
             if response.status_code >= 500:
                 if retries < self.MAX_RETRIES:
@@ -134,11 +142,7 @@ class WorldQuantClient:
                 response.status_code,
             )
 
-            # Debug while testing
-            print("\n===== AUTH DEBUG =====")
-            print("STATUS:", response.status_code)
-            print("BODY:", response.text[:500])
-            print("======================\n")
+            logger.debug("Auth response: %d — %s", response.status_code, response.text[:200])
 
             if response.status_code in (200, 201):
                 self._authenticated = True
@@ -344,6 +348,41 @@ class WorldQuantClient:
 
         logger.error("Simulation polling timed out after %ds", self.POLL_TIMEOUT)
         return None
+
+    def poll_simulations_batch(self, progress_urls: dict[int, str], max_workers: int = 10) -> dict[int, dict]:
+        """Poll multiple simulations concurrently using a thread pool.
+
+        Args:
+            progress_urls: Dict mapping an arbitrary ID (e.g. experiment ID) to its progress URL.
+            max_workers: Number of concurrent polling threads.
+
+        Returns:
+            Dict mapping the same IDs to their simulation result dicts (or None on failure).
+        """
+        import concurrent.futures
+
+        results = {}
+        if not progress_urls:
+            return results
+
+        logger.info("Batch polling %d simulations with %d workers...", len(progress_urls), max_workers)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_id = {
+                executor.submit(self.poll_simulation, url): exp_id
+                for exp_id, url in progress_urls.items()
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_id):
+                exp_id = future_to_id[future]
+                try:
+                    result = future.result()
+                    results[exp_id] = result
+                except Exception as e:
+                    logger.error("Simulation polling thread failed for ID %s: %s", exp_id, e)
+                    results[exp_id] = None
+                    
+        return results
 
     # ── ALPHA FETCH ───────────────────────────────────────────────────────
 

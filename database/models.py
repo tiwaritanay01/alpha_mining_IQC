@@ -42,6 +42,8 @@ class Experiment(Base):
     classification = Column(String(50))
     is_archived = Column(Integer, default=0)  # Use Integer (0/1) for SQLite boolean compat
 
+    structure_hash = Column(String(32), index=True)
+
     notes = Column(Text)
 
     created_at = Column(

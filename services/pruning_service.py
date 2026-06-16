@@ -3,16 +3,22 @@
 from database.database import get_db
 from database.models import Experiment
 
+
 def prune_experiments(keep_top: int = 50) -> int:
     """
-    Archive underperforming or un-scored experiments, keeping the top K.
-    
+    Archive underperforming experiments, keeping the top K scored ones.
+
+    Safety rules:
+    - NEVER archive root experiments (parent_id IS NULL).
+    - NEVER archive un-scored experiments (score IS NULL) — they haven't been tested yet.
+    - Only archive scored children that fall outside the top-K.
+
     Returns:
         Number of experiments archived.
     """
     archived_count = 0
     with get_db() as db:
-        # Get the IDs of the top 'keep_top' experiments by score
+        # Get the IDs of the top 'keep_top' scored experiments
         top_exps = (
             db.query(Experiment.id)
             .filter(Experiment.score.isnot(None))
@@ -23,10 +29,16 @@ def prune_experiments(keep_top: int = 50) -> int:
         )
         top_ids = {r[0] for r in top_exps}
 
-        # Find all unarchived experiments that are NOT in the top list
+        # Only prune experiments that:
+        # 1. Have been scored (score IS NOT NULL)
+        # 2. Are NOT root experiments (parent_id IS NOT NULL)
+        # 3. Are NOT in the top-K
+        # 4. Are not already archived
         to_prune = (
             db.query(Experiment)
             .filter(Experiment.is_archived == 0)
+            .filter(Experiment.score.isnot(None))        # Only prune scored
+            .filter(Experiment.parent_id.isnot(None))     # Never prune roots
             .filter(Experiment.id.notin_(top_ids))
             .all()
         )
@@ -34,7 +46,6 @@ def prune_experiments(keep_top: int = 50) -> int:
         for exp in to_prune:
             exp.is_archived = 1
             archived_count += 1
-            
-        db.commit()
 
     return archived_count
+

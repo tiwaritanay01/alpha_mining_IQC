@@ -60,6 +60,23 @@ class FieldAwareMutationEngine:
         except Exception:
             self.best_fields = []
 
+        # Build field category mappings for smart substitution
+        self.field_to_category = {}
+        self.category_to_fields = {}
+        try:
+            from services.field_service import get_all_fields
+            all_db_fields = get_all_fields()
+            for f in all_db_fields:
+                name = f.name.lower()
+                cat = f.category or "Unknown"
+                if name in self.valid_fields:
+                    self.field_to_category[name] = cat
+                    if cat not in self.category_to_fields:
+                        self.category_to_fields[cat] = []
+                    self.category_to_fields[cat].append(name)
+        except Exception:
+            pass
+
     def generate(self, expression: str, count: int = 30) -> list[str]:
         """Apply all mutation types and return up to `count` unique valid variants."""
         variants: set[str] = set()
@@ -248,23 +265,34 @@ class FieldAwareMutationEngine:
     # ── MUTATION 6: FIELD SUBSTITUTION ────────────────────────────────────
 
     def _field_mutation(self, expression: str) -> list[str]:
-        """Swap valid or invalid fields/datasets with random valid fields."""
+        """Swap valid or invalid fields with random valid fields from the same semantic category."""
         variants = []
         tokens = list(set(re.findall(r"[a-zA-Z_]\w*", expression)))
         
         allowed_non_fields = self.valid_operators | set(NEUTRALIZATIONS) | {"and", "or", "not", "if", "then", "else", "true", "false"}
 
         for token in tokens:
-            if token.lower() in self.valid_fields or token in self.valid_fields or (token.lower() not in allowed_non_fields and token.upper() not in NEUTRALIZATIONS):
-                sample_size = min(5, len(self.fields))
+            t_lower = token.lower()
+            if t_lower in self.valid_fields or token in self.valid_fields or (t_lower not in allowed_non_fields and token.upper() not in NEUTRALIZATIONS):
+                
+                # Semantic field replacement: try to find the category of the token
+                cat = self.field_to_category.get(t_lower)
                 
                 pool = []
-                if hasattr(self, 'best_fields') and self.best_fields:
-                    pool.extend(random.sample(self.best_fields, min(3, len(self.best_fields))))
-                pool.extend(random.sample(self.fields, sample_size))
+                # If we know the category and have other fields in it, pull from there
+                if cat and cat in self.category_to_fields and len(self.category_to_fields[cat]) > 1:
+                    cat_fields = self.category_to_fields[cat]
+                    sample_size = min(10, len(cat_fields))
+                    pool.extend(random.sample(cat_fields, sample_size))
+                else:
+                    # Fallback to random uniform replacement
+                    sample_size = min(5, len(self.fields))
+                    if hasattr(self, 'best_fields') and self.best_fields:
+                        pool.extend(random.sample(self.best_fields, min(3, len(self.best_fields))))
+                    pool.extend(random.sample(self.fields, sample_size))
                 
                 for replacement in set(pool):
-                    if replacement != token:
+                    if replacement != token and replacement != t_lower:
                         # Use word boundary regex to replace the field
                         pattern = r"\b" + re.escape(token) + r"\b"
                         variant = re.sub(pattern, replacement, expression)

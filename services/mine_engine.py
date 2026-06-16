@@ -88,32 +88,80 @@ class MineEngine:
             console.print(f"[green]Generated {len(generated_children)} unique valid children.[/]")
 
             # 2. Batch Simulate
-            console.print("[dim]Queuing batch simulation...[/]")
+            console.print("[dim]Submitting batch simulation...[/]")
             success_count = 0
             
+            progress_urls = {}
             for child in generated_children:
                 sim_url = self.client.submit_simulation(child.expression)
-                if not sim_url:
-                    continue
-                    
-                # In a real async loop we'd poll them all together, but for CLI we do sequentially or wait
-                result = self.client.poll_simulation(sim_url)
-                if result:
-                    # Metrics are automatically updated by import_from_api_response inside poll if we used that
-                    # Let's import it manually here since our client doesn't know the ID
-                    from services.experiment_service import import_from_api_response
-                    updated = import_from_api_response(child.id, result)
-                    if updated and updated.score and updated.score > 0:
-                        success_count += 1
-                        
-            console.print(f"[green]Simulation complete. {success_count}/{len(generated_children)} yielded positive scores.[/]")
+                if sim_url:
+                    progress_urls[child.id] = sim_url
+            
+            if progress_urls:
+                console.print(f"[dim]Polling {len(progress_urls)} simulations in parallel...[/]")
+                results = self.client.poll_simulations_batch(progress_urls, max_workers=10)
+                
+                from services.experiment_service import import_from_api_response
+                for exp_id, result in results.items():
+                    if result:
+                        updated = import_from_api_response(exp_id, result)
+                        if updated and updated.score and updated.score > 0:
+                            success_count += 1
+                            
+                console.print(f"[green]Simulation complete. {success_count}/{len(progress_urls)} yielded positive scores.[/]")
+            else:
+                console.print("[yellow]No simulations successfully submitted.[/]")
 
             # 3. Prune weak alphas
             archived = prune_experiments(keep_top=50)
             console.print(f"[dim]Pruning complete. Archived {archived} weak alphas.[/]")
 
-            # 4. Select next generation survivors
-            parents = get_top_score(limit=top_k)
+            # 4. Correlation-Aware Selection of Survivors
+            # Instead of purely taking top-K, we want the most diverse top-K.
+            try:
+                from services.embedding_service import EmbeddingService
+                embedding_svc = EmbeddingService()
+                
+                # Let's get the absolute top-K*2 first to have a pool
+                pool = get_top_score(limit=top_k * 2)
+                parents = []
+                
+                for exp in pool:
+                    if len(parents) >= top_k:
+                        break
+                        
+                    # Embed this experiment
+                    text = f"{exp.theme} {exp.expression}"
+                    emb = embedding_svc.embed_text(text)
+                    embedding_svc.store_embedding(exp.id, emb)
+                    
+                    # Check similarity against already selected parents
+                    is_correlated = False
+                    for p in parents:
+                        sim_scores = embedding_svc.find_similar(p.id, top_k=5)
+                        # sim_scores is a list of (exp_id, score)
+                        for s_id, s_score in sim_scores:
+                            if s_id == exp.id and s_score > 0.90:  # 90% correlation proxy threshold
+                                is_correlated = True
+                                break
+                        if is_correlated:
+                            break
+                    
+                    if not is_correlated:
+                        parents.append(exp)
+                
+                # If we filtered out too many, backfill with top scorers
+                if len(parents) < top_k:
+                    for exp in pool:
+                        if len(parents) >= top_k:
+                            break
+                        if exp not in parents:
+                            parents.append(exp)
+                            
+                console.print(f"[dim]Selected {len(parents)} diverse parents for next generation.[/]")
+            except Exception as e:
+                # Fallback to simple top-K if embeddings fail
+                parents = get_top_score(limit=top_k)
             
             current_generation += 1
 

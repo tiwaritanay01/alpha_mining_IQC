@@ -10,6 +10,7 @@ from database.models import Experiment
 
 from services.scoring_service import score_alpha
 from services.strategy_service import classify_expression
+from services.pattern_memory import hash_expression_structure
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,7 @@ def create_experiment(
             expression=expression,
             notes=notes,
             classification=classify_expression(expression),
+            structure_hash=hash_expression_structure(expression),
         )
         db.add(exp)
         db.flush()
@@ -178,6 +180,7 @@ def create_child_experiment(
             parent_id=parent_id,
             generation=parent.generation + 1,
             classification=classify_expression(expression),
+            structure_hash=hash_expression_structure(expression),
         )
         db.add(child)
         db.flush()

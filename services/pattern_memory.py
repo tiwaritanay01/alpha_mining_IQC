@@ -28,14 +28,19 @@ def hash_expression_structure(expression: str) -> str:
 def is_duplicate_structure(expression: str) -> bool:
     """
     Check if the structure of this expression already exists in the database.
-    (Simple version: check exact expression match first)
     """
+    # 1. Compute the structural hash
+    expr_hash = hash_expression_structure(expression)
+    
     with get_db() as db:
-        # Check exact string match
-        existing = db.query(Experiment.id).filter(Experiment.expression == expression).first()
-        if existing:
+        # 2. Check for exact string match first (fastest)
+        existing_exact = db.query(Experiment.id).filter(Experiment.expression == expression).first()
+        if existing_exact:
             return True
             
-        # Structure hashing is complex because there are 10,000s of expressions. 
-        # For memory, we just reject if exact match exists.
+        # 3. Check for structural duplicate using the hash
+        existing_struct = db.query(Experiment.id).filter(Experiment.structure_hash == expr_hash).first()
+        if existing_struct:
+            return True
+            
         return False
