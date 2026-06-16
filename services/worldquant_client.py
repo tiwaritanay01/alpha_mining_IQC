@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+import threading
 from typing import Optional
 
 import requests
@@ -25,26 +26,28 @@ class WorldQuantClient:
     """
 
     BASE_URL = "https://api.worldquantbrain.com"
-    MAX_RETRIES = 3
+    MAX_RETRIES = 5
     POLL_INTERVAL = 1.0  # seconds between poll requests
     POLL_TIMEOUT = 300   # max seconds to poll before giving up
-    MIN_REQUEST_INTERVAL = 1.0  # minimum seconds between requests
+    MIN_REQUEST_INTERVAL = 1.5  # minimum seconds between requests
 
     def __init__(self) -> None:
         self.username = os.getenv("WQ_USERNAME", "")
         self.password = os.getenv("WQ_PASSWORD", "")
         self.session = requests.Session()
         self._last_request_time: float = 0.0
+        self._throttle_lock = threading.Lock()
         self._authenticated = False
 
     # ── RATE LIMITING ─────────────────────────────────────────────────────
 
     def _throttle(self) -> None:
         """Enforce minimum interval between requests."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.MIN_REQUEST_INTERVAL:
-            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-        self._last_request_time = time.time()
+        with self._throttle_lock:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.MIN_REQUEST_INTERVAL:
+                time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.time()
 
     def _request(
         self,
@@ -62,7 +65,7 @@ class WorldQuantClient:
             # Rate limited — exponential backoff
             if response.status_code == 429:
                 if retries < self.MAX_RETRIES:
-                    wait = 2 ** retries
+                    wait = 2 ** (retries + 1)
                     logger.warning(
                         "Rate limited (429). Waiting %ds before retry %d/%d",
                         wait, retries + 1, self.MAX_RETRIES,

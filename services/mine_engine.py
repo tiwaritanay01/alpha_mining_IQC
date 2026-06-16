@@ -96,6 +96,7 @@ class MineEngine:
                 sim_url = self.client.submit_simulation(child.expression)
                 if sim_url:
                     progress_urls[child.id] = sim_url
+                time.sleep(0.5) # Pace submissions
             
             if progress_urls:
                 console.print(f"[dim]Polling {len(progress_urls)} simulations in parallel...[/]")
