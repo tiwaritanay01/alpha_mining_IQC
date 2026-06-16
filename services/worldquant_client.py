@@ -64,11 +64,11 @@ class WorldQuantClient:
 
             # Rate limited — exponential backoff
             if response.status_code == 429:
-                if retries < self.MAX_RETRIES:
-                    wait = 2 ** (retries + 1)
+                if retries < 15:
+                    wait = min(60, 2 ** (retries + 1))
                     logger.warning(
-                        "Rate limited (429). Waiting %ds before retry %d/%d",
-                        wait, retries + 1, self.MAX_RETRIES,
+                        "Rate limited (429). Waiting %ds before retry %d/15",
+                        wait, retries + 1,
                     )
                     time.sleep(wait)
                     return self._request(method, url, retries=retries + 1, **kwargs)
